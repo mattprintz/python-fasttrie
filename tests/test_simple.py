@@ -1,10 +1,10 @@
 import sys
-import triez
-import _triez
+import fasttrie
+import _fasttrie
 import unittest
 import codecs
 import multiprocessing # added to fix http://bugs.python.org/issue15881 for Py2.6
-from triez_helper import *
+from fasttrie_helper import *
 
 _SAVE_PROFILE_RESULTS = True
 
@@ -88,7 +88,7 @@ class TestBasic(unittest.TestCase):
     # create a trie just like in http://en.wikipedia.org/wiki/Trie
     def _create_trie(self):
         u = str
-        tr = triez.Trie()
+        tr = fasttrie.Trie()
         tr[uni_escape("A")] = 1
         tr[uni_escape("to")] = 1
         tr[uni_escape("tea")] = 1
@@ -106,7 +106,7 @@ class TestBasic(unittest.TestCase):
         Note that Python2.x uses UTF16 internally which U+10001 starts mapping
         chars to 2 bytes.
         """
-        tr = triez.Trie()
+        tr = fasttrie.Trie()
         # utf16,utf32: 0x0627
         tr[uni_escape("\N{ARABIC LETTER ALEF}")] = 1 
         tr[uni_escape("\N{ARABIC LETTER ALEF}\N{ARABIC LETTER ALEF}")] = 1
@@ -149,7 +149,7 @@ class TestBasic(unittest.TestCase):
                     self.assertTrue(damerau_levenshtein(x, e) <= i)
 
     def test_corrections_with_dataset(self):
-        tr = triez.Trie()
+        tr = fasttrie.Trie()
 
         lines = _read_lines(path="tests/out_keys_8859_9", encoding="iso-8859-9")
         for line in lines:
@@ -231,7 +231,7 @@ class TestBasic(unittest.TestCase):
         self.assertEqual(len(list(tr)), len(list(suffixes)))
         
         # 0 len iteration
-        tr = triez.Trie()
+        tr = fasttrie.Trie()
         for x in tr:
             pass
         
@@ -268,11 +268,11 @@ class TestBasic(unittest.TestCase):
             uni_escape("\N{ARABIC LETTER ALEF}")]) == prefixes)
 
     def test_basic(self):
-        self.assertEqual(triez.Trie().node_count(), 1)
+        self.assertEqual(fasttrie.Trie().node_count(), 1)
 
-        tr = triez.Trie()
+        tr = fasttrie.Trie()
         del tr
-        tr = triez.Trie()
+        tr = fasttrie.Trie()
         tr[uni_escape("key")] = 55
         
         self.assertTrue(uni_escape("key") in tr)
@@ -281,7 +281,7 @@ class TestBasic(unittest.TestCase):
         self.assertFalse(5 in tr)
         self.assertEqual(len(tr), 1)
         
-        self.assertRaises(_triez.Error, tr.__getitem__, 5)
+        self.assertRaises(_fasttrie.Error, tr.__getitem__, 5)
         
         ucs1_string = uni_escape("testing")
         ucs2_string = uni_escape("testing\N{ARABIC LETTER ALEF}")
@@ -305,8 +305,8 @@ class TestBasic(unittest.TestCase):
 
         try:
             tr[5] = 54
-            raise Exception("Triez.Error should be raised here.")
-        except _triez.Error:
+            raise Exception("Fasttrie.Error should be raised here.")
+        except _fasttrie.Error:
             pass
         
         del tr
@@ -323,7 +323,7 @@ class TestBasic(unittest.TestCase):
             def __del__(self):
                 A._a_destructor_called = True
                 
-        tr = triez.Trie()
+        tr = fasttrie.Trie()
         a = A()
         tr[uni_escape("mo")] = a
         self.assertEqual(_GRC(tr[uni_escape("mo")]), 2)
@@ -390,9 +390,9 @@ class TestBasic(unittest.TestCase):
         stats = []
         
         # profile search
-        trie = _triez.Trie()
+        trie = _fasttrie.Trie()
         trie[uni_escape("testing")] = 4 # a ucs1 string
-        def _triez_search():
+        def _fasttrie_search():
             for i in range(OP_COUNT):
                 val = trie[uni_escape("testing")]
                 
@@ -402,13 +402,13 @@ class TestBasic(unittest.TestCase):
             for i in range(OP_COUNT):
                 val = d[uni_escape("test_key")]
                 
-        _triez_search()
+        _fasttrie_search()
         _dict_search()
-        stats.append(_diff_stats("_triez_search", "_dict_search"))
+        stats.append(_diff_stats("_fasttrie_search", "_dict_search"))
                 
         # profile add
-        trie = _triez.Trie()
-        def _triez_add():
+        trie = _fasttrie.Trie()
+        def _fasttrie_add():
             for i in range(OP_COUNT):
                 trie[uni_escape("testing")] = "test_val"
         d = {}
@@ -416,13 +416,13 @@ class TestBasic(unittest.TestCase):
             for i in range(OP_COUNT):
                 d[uni_escape("testing")] = "test_val"
                 
-        _triez_add()
+        _fasttrie_add()
         _dict_add()
-        stats.append(_diff_stats("_triez_add", "_dict_add"))
+        stats.append(_diff_stats("_fasttrie_add", "_dict_add"))
         
         # profile delete
-        trie = _triez.Trie()
-        def _triez_del():
+        trie = _fasttrie.Trie()
+        def _fasttrie_del():
             for i in range(OP_COUNT):
                 trie[uni_escape("testing")] = "test_val"
                 del trie[uni_escape("testing")]
@@ -433,16 +433,16 @@ class TestBasic(unittest.TestCase):
                 d[uni_escape("testing")] = "test_val"
                 del d[uni_escape("testing")]
                 
-        _triez_del()
+        _fasttrie_del()
         _dict_del()
-        stats.append(_diff_stats("_triez_del", "_dict_del"))
+        stats.append(_diff_stats("_fasttrie_del", "_dict_del"))
 
         yappi.stop()
         
         if _SAVE_PROFILE_RESULTS:
             from datetime import datetime
             d = datetime.now()
-            fname = "profile_results/Triez_Python%s%s_%s.profile" % (sys.version_info[0], 
+            fname = "profile_results/Fasttrie_Python%s%s_%s.profile" % (sys.version_info[0], 
                 sys.version_info[1], d.strftime("%y%d%m"))
             with open(fname, "w") as f:
                 for stat in stats:

@@ -13,8 +13,8 @@ Example:
 
 It is just like a dict:
 ```python
-import triez
-tr = triez.Trie()
+import fasttrie
+tr = fasttrie.Trie()
 tr[u"foo"] = 1
 del trie[u"foo"]
 ```

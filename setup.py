@@ -8,7 +8,7 @@ f = open('README.md')
 long_description = f.read()
 
 HOMEPAGE = "http://bitbucket.org/sumerc/pyctrie/"
-NAME = "pyctrie"
+NAME = "fasttrie"
 VERSION = "0.1"
 DEBUG = False
 
@@ -50,17 +50,17 @@ setup(name=NAME,
     author="Sumer Cip",
     author_email="sumerc@gmail.com",
     ext_modules = [Extension(
-        "_triez",
-        sources = ["_triez.c", "trie.c"],
+        "_fasttrie",
+        sources = ["_fasttrie.c", "trie.c"],
         define_macros = user_macros,
         libraries = user_libraries,
         extra_compile_args = compile_args,
         extra_link_args = link_args,
         )],
-    py_modules =  ["triez"],
+    py_modules =  ["fasttrie"],
     #entry_points = {
     #'console_scripts': [
-    #    'triez = triez:main',
+    #    'fasttrie = fasttrie:main',
     #    ],
     #},
     description="Fast, pure C trie",
