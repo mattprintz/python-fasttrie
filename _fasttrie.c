@@ -46,13 +46,12 @@ int _initialize(void)
     return 1;
 }
 
-int _IsValid_Bytes(PyObject *s)
-{
-    return PyBytes_Check(s);
-}
-
 int _IsValid_Unicode(PyObject *s)
 {
+    if (PyBytes_Check(s)) {
+        return 1;
+    }
+
     if (!PyUnicode_Check(s)) {
         return 0;
     }
@@ -64,6 +63,16 @@ int _IsValid_Unicode(PyObject *s)
 #endif
     
     return 1;
+}
+
+PyObject *_Coerce_Unicode(PyObject *s)
+{
+    if (PyBytes_Check(s)) {
+        return PyUnicode_FromString(PyBytes_AsString(s));
+    }
+    else {
+        return s;
+    }
 }
 
 trie_key_t _PyUnicode_AS_TKEY(PyObject *s)
@@ -211,7 +220,7 @@ static PyObject *Trie_subscript(TrieObject *mp, PyObject *key)
         return NULL;
     }
     
-    k = _PyUnicode_AS_TKEY(key);
+    k = _PyUnicode_AS_TKEY(_Coerce_Unicode(key));
     w = trie_search(mp->ptrie, &k);
     if (!w) {
         PyErr_SetObject(PyExc_KeyError, key);
@@ -234,7 +243,7 @@ static int Trie_ass_sub(TrieObject *mp, PyObject *key, PyObject *val)
         return -1;
     }
     
-    k = _PyUnicode_AS_TKEY(key);
+    k = _PyUnicode_AS_TKEY(_Coerce_Unicode(key));
     if (val == NULL) {
         //search and dec. ref. count
         w = trie_search(mp->ptrie, &k);
@@ -297,7 +306,7 @@ int Trie_contains(PyObject *op, PyObject *key)
         return 0; // do not return exception here.
     }
     
-    k = _PyUnicode_AS_TKEY(key);
+    k = _PyUnicode_AS_TKEY(_Coerce_Unicode(key));
     
     if(!trie_search(mp->ptrie, &k)) {
         return 0;
@@ -377,7 +386,7 @@ int _parse_traverse_args(TrieObject *t, PyObject *args, trie_key_t *k,
         k->size = FasttrieUnicode_Size(pfx);
         k->char_size = sizeof(Py_UCS4);
 #else
-        *k = _PyUnicode_AS_TKEY(pfx);
+        *k = _PyUnicode_AS_TKEY(_Coerce_Unicode(pfx));
 #endif
     }
     
