@@ -471,7 +471,7 @@ void _suffixes(trie_node_t *p, trie_key_t *key, unsigned long index,
     trie_enum_cbk_t cbk, void* cbk_arg)
 {
     if (p->value) {
-        cbk(key, cbk_arg);
+        cbk(key, p, cbk_arg);
     }
     
     if (index == key->alloc_size) {
@@ -691,7 +691,7 @@ void trie_prefixes(trie_t *t, trie_key_t *key, unsigned long max_depth,
         }
         if(p->value)
         {
-            cbk(kp, cbk_arg);
+            cbk(kp, p, cbk_arg);
         }
         kp->size++;
     }
@@ -952,7 +952,7 @@ void _corrections(trie_t * t, trie_node_t *pprefix, trie_key_t *key,
     pk.char_size = key->char_size;
     p = _trie_prefix(prefix, &pk);
     if (p && p->value) {
-        cbk(key, cbk_arg);
+        cbk(key, p, cbk_arg);
     }
 
     // check bounds/depth

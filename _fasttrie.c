@@ -173,8 +173,8 @@ PyTypeObject TrieIteratorType = {
     PyObject_HEAD_INIT(NULL)
     0,                              /*ob_size*/
 #endif
-    "TrieSuffixes",                     /* tp_name */
-    sizeof(TrieIteratorObject),         /* tp_basicsize */
+    "TrieIterator",                 /* tp_name */
+    sizeof(TrieIteratorObject),     /* tp_basicsize */
     0,                              /* tp_itemsize */
     (destructor)Trieiter_dealloc,   /* tp_dealloc */
     0,                              /* tp_print */
@@ -197,7 +197,7 @@ PyTypeObject TrieIteratorType = {
     0,                              /* tp_clear */
     0,                              /* tp_richcompare */
     0,                              /* tp_weaklistoffset */
-    Trieiter_selfiter,                /* tp_iter */
+    Trieiter_selfiter,              /* tp_iter */
     (iternextfunc)Trieiter_next,    /* tp_iternext */
     0,                              /* tp_methods */
     0,
@@ -393,14 +393,26 @@ int _parse_traverse_args(TrieObject *t, PyObject *args, trie_key_t *k,
     return 1;
 }
 
-int _enum_keys(trie_key_t *k, void *arg)
+int _enum_keys(trie_key_t *k, trie_node_t *n, void *arg)
 {
-    PySet_Add((PyObject *)arg, _TKEY_AS_PyUnicode(k));
-
+    PyList_Append((PyObject *)arg, _TKEY_AS_PyUnicode(k));
     return 0;
 }
 
-static PyObject *Trie_suffixes(PyObject* selfobj, PyObject *args)
+int _enum_items(trie_key_t *k, trie_node_t *n, void *arg)
+{
+    PyObject *tup = PyTuple_Pack(2, _TKEY_AS_PyUnicode(k), (PyObject *)n->value);
+    PyList_Append((PyObject *)arg, tup);
+    return 0;
+}
+
+int _enum_values(trie_key_t *k, trie_node_t *n, void *arg)
+{
+    PyList_Append((PyObject *)arg, (PyObject *)n->value);
+    return 0;
+}
+
+static PyObject *Trie_keys(PyObject* selfobj, PyObject *args)
 {
     trie_key_t k;
     unsigned long max_depth;
@@ -411,10 +423,44 @@ static PyObject *Trie_suffixes(PyObject* selfobj, PyObject *args)
         return NULL;
     }
     
-    sfxs = PySet_New(0);
+    sfxs = PyList_New(0);
     trie_suffixes(((TrieObject *)selfobj)->ptrie, &k, max_depth, _enum_keys, sfxs);
     
     return sfxs;
+}
+
+PyObject *Trie_items(PyObject *selfobj, PyObject *args)
+{
+    trie_key_t k;
+    unsigned long max_depth;
+    PyObject *values;
+
+    if (!_parse_traverse_args((TrieObject *)selfobj, args, &k, &max_depth))
+    {
+        return NULL;
+    }
+    
+    values = PyList_New(0);
+    trie_suffixes(((TrieObject *)selfobj)->ptrie, &k, max_depth, _enum_items, values);
+    
+    return values;
+}
+
+static PyObject *Trie_values(PyObject* selfobj, PyObject *args)
+{
+    trie_key_t k;
+    unsigned long max_depth;
+    PyObject *values;
+
+    if (!_parse_traverse_args((TrieObject *)selfobj, args, &k, &max_depth))
+    {
+        return NULL;
+    }
+    
+    values = PyList_New(0);
+    trie_suffixes(((TrieObject *)selfobj)->ptrie, &k, max_depth, _enum_values, values);
+    
+    return values;
 }
 
 static PyObject *Trie_itersuffixes(PyObject* selfobj, PyObject *args)
@@ -441,7 +487,7 @@ static PyObject *Trie_prefixes(PyObject* selfobj, PyObject *args)
         return NULL;
     }
     
-    sfxs = PySet_New(0);
+    sfxs = PyList_New(0);
     trie_prefixes(((TrieObject *)selfobj)->ptrie, &k, max_depth, _enum_keys, sfxs);
     
     return sfxs;
@@ -472,7 +518,7 @@ static PyObject *Trie_corrections(PyObject* selfobj, PyObject *args)
         return NULL;
     }
     
-    sfxs = PySet_New(0);
+    sfxs = PyList_New(0);
     trie_corrections(((TrieObject *)selfobj)->ptrie, &k, max_depth, _enum_keys, sfxs);
     
     return sfxs;
@@ -513,25 +559,26 @@ PyObject *Trie_iter(PyObject *obj)
         trie_itersuffixes_init, trie_itersuffixes_next, trie_itersuffixes_reset, trie_itersuffixes_deinit);
 }
 
-// Iterate keys and values start from root, depth is trie's height.
-PyObject *Trie_items(PyObject *obj)
+PyObject *Trie_getstate(PyObject *selfobj)
 {
-    TrieObject *self;
-    trie_key_t k;
+    return Trie_items(selfobj, PyTuple_New(0));
+}
 
-    self = (TrieObject *)obj;
-
-    // create an empty string
-    k.s = "";
-    k.size = 0;
-#ifdef IS_PEP393_AVAILABLE
-    k.char_size = sizeof(Py_UCS4);
-#else
-    k.char_size = sizeof(Py_UNICODE);
-#endif
-    
-    return _create_iterator(self, &k, self->ptrie->height, 
-        trie_itersuffixes_init, trie_itersuffixes_next, trie_itersuffixes_reset, trie_itersuffixes_deinit);
+PyObject *Trie_setstate(PyObject *selfobj, PyObject *args)
+{
+    PyObject *state;
+    PyObject *key = NULL;
+    PyObject *val = NULL;
+    if (!PyArg_ParseTuple(args, "O", &state)) {
+        printf("Couldn't Parse args");
+        return 0;
+    }
+    for (int i = 0; i < PyList_Size(state); i++) {
+        PyObject *tup = PyList_GetItem(state, (Py_ssize_t) i);
+        PyArg_ParseTuple(tup, "OO", &key, &val);
+        Trie_ass_sub((TrieObject *) selfobj, key, val);
+    }
+    Py_RETURN_NONE;
 }
 
 /* Hack to implement "key in trie" */
@@ -559,18 +606,26 @@ static PyMethodDef Trie_methods[] = {
         "Memory usage of the trie. Used for debugging purposes."},
     {"node_count", (PyCFunction)Trie_node_count, METH_NOARGS, 
         "Node count of the trie. Used for debugging purposes."},
-    {"iter_suffixes", Trie_itersuffixes, METH_VARARGS, 
-        "T.iter_suffixes() -> a set-like object providing a view on T's suffixes"},
-    {"suffixes", Trie_suffixes, METH_VARARGS, 
-        "T.suffixes() -> a list containing T's suffixes"},
-    {"iter_prefixes", Trie_iterprefixes, METH_VARARGS, 
-        "T.iter_prefixes() -> a set-like object providing a view on T's prefixes"},
-    {"prefixes", Trie_prefixes, METH_VARARGS, 
-        "T.prefixes() -> a list containing T's prefixes"},
+
+    {"keys", Trie_keys, METH_VARARGS, "List of keys"},
+    {"values", Trie_values, METH_VARARGS, "List of values"},
+    {"items", Trie_items, METH_VARARGS, "List of values"},
+    // {"iter_suffixes", Trie_itersuffixes, METH_VARARGS, 
+        // "T.iter_suffixes() -> a set-like object providing a view on T's suffixes"},
+    // {"suffixes", Trie_keys, METH_VARARGS, 
+        // "T.suffixes() -> a list containing T's suffixes"},
+    // {"iter_prefixes", Trie_iterprefixes, METH_VARARGS, 
+        // "T.iter_prefixes() -> a set-like object providing a view on T's prefixes"},
+    // {"prefixes", Trie_prefixes, METH_VARARGS, 
+        // "T.prefixes() -> a list containing T's prefixes"},
     {"iter_corrections", Trie_itercorrections, METH_VARARGS, 
         "T.iter_corrections() -> a set-like object providing a view on T's corrections"},
     {"corrections", Trie_corrections, METH_VARARGS, 
         "T.corrections() -> a list containing T's corrections"},
+    
+    // Methods for pickling/unpickling
+    {"__getstate__", Trie_getstate, METH_NOARGS, "Internal state for pickling"},
+    {"__setstate__", Trie_setstate, METH_VARARGS, "Return trie from pickled state"},
     {NULL}  /* Sentinel */
 };
 

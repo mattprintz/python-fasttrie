@@ -107,7 +107,7 @@ typedef struct iter_s {
     unsigned long max_depth;
 } iter_t;
 
-typedef int (*trie_enum_cbk_t)(trie_key_t *key, void *arg);
+typedef int (*trie_enum_cbk_t)(trie_key_t *key, trie_node_t *node, void *arg);
 typedef iter_t *(*trie_iter_init_func_t)(trie_t *t, trie_key_t *key, 
     unsigned long max_depth);
 typedef iter_t *(*trie_iter_next_func_t)(iter_t *iter);
