@@ -401,7 +401,9 @@ int _enum_keys(trie_key_t *k, trie_node_t *n, void *arg)
 
 int _enum_items(trie_key_t *k, trie_node_t *n, void *arg)
 {
-    PyObject *tup = PyTuple_Pack(2, _TKEY_AS_PyUnicode(k), (PyObject *)n->value);
+    PyObject *tup = PyTuple_New(2);
+    PyTuple_SetItem(tup, 0, _TKEY_AS_PyUnicode(k));
+    PyTuple_SetItem(tup, 1, (PyObject *)n->value);
     PyList_Append((PyObject *)arg, tup);
     return 0;
 }
@@ -559,25 +561,89 @@ PyObject *Trie_iter(PyObject *obj)
         trie_itersuffixes_init, trie_itersuffixes_next, trie_itersuffixes_reset, trie_itersuffixes_deinit);
 }
 
+PyObject *Trie_node_state(trie_node_t *node)
+{
+    PyObject *tup = PyTuple_New(3);
+    PyObject *key = PyUnicode_New(1, node->key);
+    PyUnicode_WriteChar(key, 0, node->key);
+    PyObject *value = (node->value == '\0' ? Py_NotImplemented : (PyObject *)node->value);
+    PyObject *children = PyList_New(0);
+
+    trie_node_t *child = node->children;
+    while(child) {
+        PyList_Append(children, Trie_node_state(child));
+        child = child->next;
+    }
+
+    PyTuple_SetItem(tup, 0, key);
+    PyTuple_SetItem(tup, 1, value);
+    PyTuple_SetItem(tup, 2, children);
+    return tup;
+}
+
+trie_node_t *Trie_node_unstate(trie_t *trie, PyObject *state) {
+    PyObject *key;
+    PyObject *value;
+    PyObject *children;
+    PyObject *child_state;
+    trie_node_t *child_node;
+    PyArg_ParseTuple(state, "OOO", &key, &value, &children);
+
+    if (value == Py_NotImplemented) {
+        value = NULL;
+    }
+    else {
+        // Increase reference to value, which is always a Python object
+        Py_INCREF(value);
+    }
+
+    trie_node_t *node = NODECREATE(trie, (TRIE_CHAR) PyUnicode_ReadChar(key, 0), (uintptr_t) value);
+    for(int i = 0; i < PyList_Size(children); i++) {
+        child_state = PyList_GetItem(children, i);
+        child_node = Trie_node_unstate(trie, child_state);
+        child_node->next = node->children;
+        node->children = child_node;
+    }
+
+    return node;
+}
+
 PyObject *Trie_getstate(PyObject *selfobj)
 {
-    return Trie_items(selfobj, PyTuple_New(0));
+    trie_t *trie = ((TrieObject *)selfobj)->ptrie;
+    PyObject *root_state = Trie_node_state(trie->root);
+
+    return Py_BuildValue("(llllO)", trie->node_count, trie->item_count,
+        trie->height, trie->mem_usage, root_state);
 }
 
 PyObject *Trie_setstate(PyObject *selfobj, PyObject *args)
 {
     PyObject *state;
-    PyObject *key = NULL;
-    PyObject *val = NULL;
     if (!PyArg_ParseTuple(args, "O", &state)) {
         printf("Couldn't Parse args");
         return 0;
     }
-    for (int i = 0; i < PyList_Size(state); i++) {
-        PyObject *tup = PyList_GetItem(state, (Py_ssize_t) i);
-        PyArg_ParseTuple(tup, "OO", &key, &val);
-        Trie_ass_sub((TrieObject *) selfobj, key, val);
-    }
+    unsigned long node_count;
+    unsigned long item_count;
+    unsigned long height;
+    unsigned long mem_usage;
+    PyObject *root_state;
+
+    PyArg_ParseTuple(state, "llllO", &node_count, &item_count, &height,
+        &mem_usage, &root_state);
+
+    trie_t *trie = ((TrieObject *)selfobj)->ptrie;
+    trie_node_t *old_root = trie->root;
+
+    trie->node_count = node_count;
+    trie->item_count = item_count;
+    trie->height = height;
+    trie->mem_usage = mem_usage;
+
+    trie_node_t *new_root = Trie_node_unstate(trie, root_state);
+    trie->root = new_root;
+    NODEFREE(trie, old_root);
     Py_RETURN_NONE;
 }
 
@@ -624,7 +690,7 @@ static PyMethodDef Trie_methods[] = {
         "T.corrections() -> a list containing T's corrections"},
     
     // Methods for pickling/unpickling
-    {"__getstate__", Trie_getstate, METH_NOARGS, "Internal state for pickling"},
+    {"__getstate__", (PyCFunction)Trie_getstate, METH_NOARGS, "Internal state for pickling"},
     {"__setstate__", Trie_setstate, METH_VARARGS, "Return trie from pickled state"},
     {NULL}  /* Sentinel */
 };

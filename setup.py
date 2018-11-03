@@ -4,8 +4,9 @@ import os
 from setuptools import setup
 from distutils.core import Extension
 
-f = open('README.md')
-long_description = f.read()
+# f = open('README.md')
+with open('README.md') as f:
+    long_description = f.read()
 
 HOMEPAGE = "http://bitbucket.org/sumerc/pyctrie/"
 NAME = "fasttrie"
@@ -72,4 +73,3 @@ setup(name=NAME,
     download_url = "%s/%s-%s.tar.gz" % (HOMEPAGE, NAME, VERSION),
     test_suite = 'nose.collector'
 )
-

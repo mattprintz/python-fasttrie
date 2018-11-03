@@ -148,4 +148,7 @@ void trie_itercorrections_deinit(iter_t *iter);
 // Debug functions 
 void trie_debug_print_key(trie_key_t *k);
 
+trie_node_t *NODECREATE(trie_t* t, TRIE_CHAR key, TRIE_DATA value);
+void NODEFREE(trie_t* t, trie_node_t *nd);
+
 #endif
