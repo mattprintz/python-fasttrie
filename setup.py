@@ -4,13 +4,12 @@ import os
 from setuptools import setup
 from distutils.core import Extension
 
-# f = open('README.md')
 with open('README.md') as f:
     long_description = f.read()
 
-HOMEPAGE = "http://bitbucket.org/sumerc/pyctrie/"
+HOMEPAGE = "https://github.com/mattprintz/python-fasttrie"
 NAME = "fasttrie"
-VERSION = "0.1"
+VERSION = "0.2"
 DEBUG = False
 
 user_macros = []
