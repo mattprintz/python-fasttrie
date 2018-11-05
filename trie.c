@@ -281,17 +281,35 @@ int trie_add(trie_t *t, trie_key_t *key, TRIE_DATA value)
 {
     TRIE_CHAR ch;
     unsigned int i;
-    trie_node_t *curr, *parent;
+    trie_node_t *curr, *parent, *prev, *next;
 
     i = 0;
     parent = t->root;
     curr = t->root->children;
     while(i < key->size)
     {
+        prev = NULL;
         KEY_CHAR_READ(key, i, &ch);
         
-        while(curr && curr->key != ch) {
+        while(curr && curr->key < ch) {
+            prev = curr;
             curr = curr->next;
+        }
+        if ((curr && curr->key != ch) || (curr == NULL && prev)) {
+            curr = NODECREATE(t, ch, (TRIE_DATA)0);
+            if (!curr){
+                return 0;
+            }
+
+            if (!prev) {
+                curr->next = parent->children;
+                parent->children = curr;
+            }
+            else {
+                curr->next = prev->next;
+                prev->next = curr;
+            }
+            t->node_count++;
         }
         if (!curr) {
             curr = NODECREATE(t, ch, (TRIE_DATA)0);

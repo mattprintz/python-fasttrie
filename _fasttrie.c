@@ -598,7 +598,8 @@ trie_node_t *Trie_node_unstate(trie_t *trie, PyObject *state) {
     }
 
     trie_node_t *node = NODECREATE(trie, (TRIE_CHAR) PyUnicode_ReadChar(key, 0), (uintptr_t) value);
-    for(int i = 0; i < PyList_Size(children); i++) {
+    // Link nodes in reverse order to preserve original sort
+    for(int i = PyList_Size(children) - 1; i >= 0; i--) {
         child_state = PyList_GetItem(children, i);
         child_node = Trie_node_unstate(trie, child_state);
         child_node->next = node->children;
