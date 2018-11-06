@@ -255,11 +255,11 @@ static int Trie_ass_sub(TrieObject *mp, PyObject *key, PyObject *val)
         
         trie_del(mp->ptrie, &k);// no need for ret check as we already done above.
     } else {
-        Py_INCREF(val);
         if(!trie_add(mp->ptrie, &k, (TRIE_DATA)val)) {
             PyErr_SetString(FasttrieError, "key cannot be added.");
             return -1;
         }
+        Py_INCREF(val);
     }
     return 0;
 }
@@ -292,6 +292,46 @@ static PyObject *Trie_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     }
 
     return (PyObject *)self;
+}
+
+static int Trie_init(PyObject *self, PyObject *args, PyObject *kwds) 
+{
+    int i, tup_size;
+    PyObject *arg, *item, *key, *value;
+    if (!PyArg_ParseTuple(args, "|O", &arg)) {
+        return -1;
+    }
+    if (arg && PyDict_Check(arg)) {
+        arg = PyDict_Items(arg);
+    }
+    if(kwds) {
+        if (arg) {
+            arg = PySequence_Concat(PySequence_Tuple(arg),  PySequence_Tuple(PyDict_Items(kwds)));
+        }
+        else {
+            arg = PyDict_Items(kwds);
+        }
+    }
+
+    if ((arg && PySequence_Check(arg)) )  {
+
+        for (i = 0; i < PySequence_Length(arg); i++) {
+            item = PySequence_GetItem(arg, i);
+            tup_size = PySequence_Length(item);
+            if (!(PySequence_Check(item) && tup_size == 2)) {
+                PyErr_Format(PyExc_ValueError,
+                            "trie update sequence element #%zd "
+                            "has length %zd; 2 is required",
+                            i, tup_size);
+                return -1;
+            }
+            key = PySequence_GetItem(item, 0);
+            value = PySequence_GetItem(item, 1);
+            Trie_ass_sub((TrieObject *) self, key, value);
+        }
+    }
+
+    return 0;
 }
 
 // Return 1 if `key` is in trie `op`, 0 if not, and -1 on error. 
@@ -737,7 +777,7 @@ static PyTypeObject TrieType = {
     0,                              /* tp_descr_get */
     0,                              /* tp_descr_set */
     0,                              /* tp_dictoffset */
-    0,                              /* tp_init */
+    Trie_init,                      /* tp_init */
     0,                              /* tp_alloc */
     Trie_new,                       /* tp_new */
 };
