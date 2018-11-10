@@ -274,11 +274,6 @@ static PyObject* Trie_node_count(TrieObject* self)
     return Py_BuildValue("l", self->ptrie->node_count);
 }
 
-static void Trie_dealloc(TrieObject* self)
-{
-    trie_destroy(self->ptrie);
-}
-
 static PyObject *Trie_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 {
     TrieObject *self;
@@ -601,90 +596,81 @@ PyObject *Trie_iter(PyObject *obj)
         trie_itersuffixes_init, trie_itersuffixes_next, trie_itersuffixes_reset, trie_itersuffixes_deinit);
 }
 
-PyObject *Trie_node_state(trie_node_t *node)
+static void Trie_dealloc(TrieObject* self)
 {
-    PyObject *tup = PyTuple_New(3);
-    PyObject *key = PyUnicode_New(1, node->key);
-    PyUnicode_WriteChar(key, 0, node->key);
-    PyObject *value = (node->value == '\0' ? Py_NotImplemented : (PyObject *)node->value);
-    PyObject *children = PyList_New(0);
-
-    trie_node_t *child = node->children;
-    while(child) {
-        PyList_Append(children, Trie_node_state(child));
-        child = child->next;
+    PyObject *items = Trie_items(self, PyTuple_New(0));
+    for (int i = 0; i < PySequence_Size(items); i++) {
+        Py_DECREF(PySequence_GetItem(items, i));
     }
-
-    PyTuple_SetItem(tup, 0, key);
-    PyTuple_SetItem(tup, 1, value);
-    PyTuple_SetItem(tup, 2, children);
-    return tup;
-}
-
-trie_node_t *Trie_node_unstate(trie_t *trie, PyObject *state) {
-    PyObject *key;
-    PyObject *value;
-    PyObject *children;
-    PyObject *child_state;
-    trie_node_t *child_node;
-    PyArg_ParseTuple(state, "OOO", &key, &value, &children);
-
-    if (value == Py_NotImplemented) {
-        value = NULL;
-    }
-    else {
-        // Increase reference to value, which is always a Python object
-        Py_INCREF(value);
-    }
-
-    trie_node_t *node = NODECREATE(trie, (TRIE_CHAR) PyUnicode_ReadChar(key, 0), (uintptr_t) value);
-    // Link nodes in reverse order to preserve original sort
-    for(int i = PyList_Size(children) - 1; i >= 0; i--) {
-        child_state = PyList_GetItem(children, i);
-        child_node = Trie_node_unstate(trie, child_state);
-        child_node->next = node->children;
-        node->children = child_node;
-    }
-
-    return node;
+    trie_destroy(self->ptrie);
 }
 
 PyObject *Trie_getstate(PyObject *selfobj)
 {
     trie_t *trie = ((TrieObject *)selfobj)->ptrie;
-    PyObject *root_state = Trie_node_state(trie->root);
+    trie_serialized_t *repr = trie_serialize(trie);
 
-    return Py_BuildValue("(llllO)", trie->node_count, trie->item_count,
-        trie->height, trie->mem_usage, root_state);
+    PyObject *value_tup = PyTuple_New(repr->value_length - 1);
+    for(int i = 1; i < repr->value_length; i++) {
+        Py_INCREF((PyObject *) repr->value_ptrs[i]);
+        PyTuple_SetItem(value_tup, (i - 1), (PyObject *) repr->value_ptrs[i]);
+    }
+
+    PyObject *state_tup = PyTuple_New(5);
+    PyTuple_SetItem(state_tup, 0, PyLong_FromUnsignedLong(trie->node_count));
+    PyTuple_SetItem(state_tup, 1, PyLong_FromUnsignedLong(trie->height));
+    PyTuple_SetItem(state_tup, 2, PyLong_FromUnsignedLong(trie->mem_usage));
+    PyTuple_SetItem(state_tup, 3, PyBytes_FromStringAndSize(repr->s, repr->s_length));
+    PyTuple_SetItem(state_tup, 4, value_tup);
+    
+    // TODO: free memory for repr and its items
+
+    return state_tup;
 }
 
 PyObject *Trie_setstate(PyObject *selfobj, PyObject *args)
 {
     PyObject *state;
     if (!PyArg_ParseTuple(args, "O", &state)) {
-        printf("Couldn't Parse args");
-        return 0;
+        return -1;
     }
     unsigned long node_count;
     unsigned long item_count;
     unsigned long height;
     unsigned long mem_usage;
-    PyObject *root_state;
+    PyObject *trie_byte_repr;
+    PyObject *value_list;
 
-    PyArg_ParseTuple(state, "llllO", &node_count, &item_count, &height,
-        &mem_usage, &root_state);
+    PyArg_ParseTuple(state, "lllOO", &node_count, &height, &mem_usage, 
+        &trie_byte_repr, &value_list);
 
     trie_t *trie = ((TrieObject *)selfobj)->ptrie;
-    trie_node_t *old_root = trie->root;
+    trie_destroy(trie);
+    trie_serialized_t *repr = (trie_serialized_t *)malloc(sizeof(trie_serialized_t));
+    item_count = PySequence_Size(value_list);
 
+    TRIE_DATA *value_ptrs = (TRIE_DATA *)malloc((item_count + 1) * sizeof(TRIE_DATA));
+    value_ptrs[0] = NULL;
+    for(int i = 0; i < item_count; i++) {
+        PyObject *value = (PyObject *)PyTuple_GetItem(value_list, i);
+        Py_INCREF(value);
+        value_ptrs[i+1] = (void *)value;
+    }
+
+    repr->s = PyBytes_AsString(trie_byte_repr);
+    repr->s_length = PyBytes_Size(trie_byte_repr);
+    repr->value_ptrs = value_ptrs;
+    repr->value_length = item_count + 1;
+
+    trie = trie_deserialize(repr);
+
+    ((TrieObject *)selfobj)->ptrie = trie;
+    
     trie->node_count = node_count;
     trie->item_count = item_count;
     trie->height = height;
     trie->mem_usage = mem_usage;
 
-    trie_node_t *new_root = Trie_node_unstate(trie, root_state);
-    trie->root = new_root;
-    NODEFREE(trie, old_root);
     Py_RETURN_NONE;
 }
 

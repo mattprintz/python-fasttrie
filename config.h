@@ -23,6 +23,7 @@
 #define TRIE_CHAR Py_UNICODE
 #endif
 #define TRIE_DATA uintptr_t
+#define TRIE_NODE_SIZE (sizeof(char) + sizeof(unsigned long) + sizeof(char))  // key + value + children_count
 
 #if defined(MS_WINDOWS)
 #define __WINDOWS

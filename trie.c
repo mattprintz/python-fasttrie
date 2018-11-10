@@ -281,7 +281,7 @@ int trie_add(trie_t *t, trie_key_t *key, TRIE_DATA value)
 {
     TRIE_CHAR ch;
     unsigned int i;
-    trie_node_t *curr, *parent, *prev, *next;
+    trie_node_t *curr, *parent, *prev;
 
     i = 0;
     parent = t->root;
@@ -414,6 +414,111 @@ int trie_del(trie_t *t, trie_key_t *key)
     }
 
     return found;
+}
+
+char trie_node_child_count(trie_node_t *t) {
+    char count = 0;
+    t = t->children;
+    while(t != NULL) {
+        count++;
+        t = t->next;
+    }
+    return count;
+}
+
+int trie_node_serializer(trie_node_t *t, char *s, unsigned long *node_offset, TRIE_DATA *value_ptrs, unsigned long *value_offset) {
+    unsigned long s_offset = *node_offset * TRIE_NODE_SIZE;
+    unsigned long value_idx;
+    char child_count = trie_node_child_count(t);
+    char * i_ptr = s + s_offset;
+    trie_node_t *child;
+
+    if (t->value != 0) {
+        *value_offset = *value_offset + 1;
+        value_ptrs[*value_offset] = t->value;
+        value_idx = *value_offset;
+    }
+    else {
+        value_idx = 0;
+    }
+
+    memcpy(i_ptr, &t->key, sizeof(char));
+    memcpy(i_ptr + 1, &value_idx, sizeof(unsigned long));
+    memcpy(i_ptr + 1 + sizeof(value_idx), &child_count, sizeof(char));
+    *node_offset = *node_offset + 1;
+
+    child = t->children;
+    while(child) {
+        trie_node_serializer(child, s, node_offset, value_ptrs, value_offset);
+        child = child->next;
+    }
+
+    return 0;
+}
+
+trie_node_t *trie_node_deserializer(trie_t *trie, char *s, unsigned long *node_offset, TRIE_DATA *value_ptrs) {
+    unsigned long s_offset = *node_offset * TRIE_NODE_SIZE;
+    unsigned long value_idx;
+    char key;
+    char child_count;
+    char * i_ptr = s + s_offset;
+
+    memcpy(&key, i_ptr, sizeof(char));
+    memcpy(&value_idx, i_ptr + 1, sizeof(unsigned long));
+    memcpy(&child_count, i_ptr + 1 + sizeof(unsigned long), sizeof(char));
+
+    TRIE_DATA *value = value_ptrs[value_idx];
+
+    uintptr_t *children = (uintptr_t *)malloc(child_count * sizeof(uintptr_t));
+
+    // Create an array of nodes, then reverse it to keep original order
+    trie_node_t *node = NODECREATE(trie, key, value);
+    for(int i = 0; i < child_count; i++) {
+        *node_offset = *node_offset + 1;
+        children[i] = (void *)trie_node_deserializer(trie, s, node_offset, value_ptrs);
+    }
+    for(int i = child_count - 1; i >= 0; i--) {
+        trie_node_t *child = (trie_node_t *)children[i];
+        child->next = node->children;
+        node->children = child;
+    }
+    free(children);
+
+
+    return node;
+}
+
+trie_serialized_t *trie_serialize(trie_t *t) {
+    trie_serialized_t *repr = (trie_serialized_t *)TRIEMALLOC(NULL, sizeof(trie_serialized_t));
+    unsigned long s_size, value_size, node_offset, value_offset;
+
+    s_size = t->node_count * TRIE_NODE_SIZE;
+    value_size = (t->item_count + 1) * sizeof(TRIE_DATA);
+    node_offset = value_offset = 0;
+
+    char *s = (char *)TRIEMALLOC(NULL, s_size);
+    TRIE_DATA *value_ptrs = (TRIE_DATA *)TRIEMALLOC(NULL, value_size);
+    value_ptrs[0] = 0;
+
+    trie_node_serializer(t->root, s, &node_offset, value_ptrs, &value_offset);
+
+    repr->s = s;
+    repr->value_ptrs = value_ptrs;
+    repr->s_length = s_size;
+    repr->value_length = t->item_count + 1;
+
+    return repr;
+}
+
+trie_t *trie_deserialize(trie_serialized_t *t) {
+    unsigned long node_offset = 0;
+    trie_node_t *root_node = trie_node_deserializer(t, t->s, &node_offset, t->value_ptrs);
+    trie_t *trie = trie_create();
+    NODEFREE(trie, trie->root);
+    trie->root = root_node;
+
+    return trie;
+
 }
 
 iter_t * ITERATORCREATE(trie_t *t, trie_key_t *key, unsigned long max_depth, 

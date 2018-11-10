@@ -54,6 +54,13 @@ typedef struct trie_s {
     struct trie_node_s *root;
 } trie_t;
 
+typedef struct trie_serialized_s {
+    char *s; // Serialized data string
+    TRIE_DATA *value_ptrs;
+    unsigned long s_length;
+    unsigned long value_length;
+} trie_serialized_t;
+
 typedef enum iter_op_type_e {
     NOOP = 0,
     DELETE,
@@ -121,6 +128,8 @@ unsigned long trie_mem_usage(trie_t *t);
 trie_node_t *trie_search(trie_t *t, trie_key_t *key);
 int trie_add(trie_t *t, trie_key_t *key, TRIE_DATA value);
 int trie_del(trie_t *t, trie_key_t *key);
+trie_serialized_t *trie_serialize(trie_t *t);
+trie_t *trie_deserialize(trie_serialized_t *s);
 
 // Enumeration functions
 // Suffix
