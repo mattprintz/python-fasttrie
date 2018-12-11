@@ -175,14 +175,18 @@ trie_node_t *NODECREATE(trie_t* t, TRIE_CHAR key, TRIE_DATA value)
     if (nd) {
         nd->key = key;
         nd->value = value;
+        nd->child_count = 0;
+        nd->hash_size = TRIE_MIN_HASH_SIZE;
+        nd->child_hash = TRIEMALLOC(t, sizeof(trie_node_t *) * nd->hash_size);
         nd->next = NULL;
-        nd->children = NULL;
+        for (int i = 0; i < nd->hash_size; i++) nd->child_hash[i] = NULL;
     }
     return nd;
 }
 
 void NODEFREE(trie_t* t, trie_node_t *nd)
 {
+    TRIEFREE(t, nd->child_hash);
     TRIEFREE(t, nd);
 }
 
@@ -203,28 +207,37 @@ trie_t *trie_create(void)
     return t;
 }
 
-void trie_destroy(trie_t *t)
-{
-    trie_node_t *curr, *parent, *next;
+void trie_destroy_node(trie_t *t, trie_node_t *node) {
+    trie_node_t *curr = node;
+    trie_node_t *prev;
+    // Recursively destroy all children nodes
+    while (node->child_count > 0) {
+        for (int i = 0; i < node->hash_size; i++) {
+            if (node->child_hash[i]) {
+                prev = NULL;  // Reset value of prev
+                curr = node->child_hash[i];
+                // Advance to last in linked list, if it exists
+                while (curr->next) {
+                    prev = curr;
+                    curr = curr->next;
+                }
+                // Remove reference to data being removed, either from next or child_hash
+                if (prev)
+                    prev->next = NULL;
+                else
+                    node->child_hash[i] = NULL;
 
-    while(t->node_count > 0)
-    {
-        curr = t->root;
-        parent = NULL;
-        while(curr->children) {
-            parent = curr;
-            curr = curr->children;
+                trie_destroy_node(t, curr);
+                node->child_count--;
+            }
         }
-
-        if (parent) {
-            next = parent->children->next;
-            NODEFREE(t, parent->children);
-            parent->children = next;
-        } else { // root remaining
-            NODEFREE(t, t->root);
-        }
-        t->node_count--;
     }
+    NODEFREE(t, node);
+    t->node_count--;
+}
+
+void trie_destroy(trie_t *t) {
+    trie_destroy_node(t, t->root);
     TRIEFREE(t, t);
 }
 
@@ -243,11 +256,11 @@ trie_node_t *_trie_prefix(trie_node_t *t, trie_key_t *key)
         return NULL;
     }
     i = 0;
-    parent = t;
-    curr = t->children;
+    parent = curr = t;
     while(i < key->size)
     {
         KEY_CHAR_READ(key, i, &ch);
+        curr = trie_get_child(parent, ch);
 
         while(curr && curr->key != ch) {
             curr = curr->next;
@@ -257,7 +270,6 @@ trie_node_t *_trie_prefix(trie_node_t *t, trie_key_t *key)
         }
 
         parent = curr;
-        curr = curr->children;
         i++;
     }
 
@@ -276,6 +288,53 @@ trie_node_t *trie_search(trie_t *t, trie_key_t *key)
 
     return r;
 }
+trie_node_t *trie_get_child(trie_node_t *node, TRIE_CHAR ch) {
+    unsigned int pos = (int)ch % node->hash_size;
+    trie_node_t * curr = node->child_hash[pos];
+    while (curr && curr->key != ch) {
+        curr = curr->next;
+    }
+    return curr;
+}
+
+int trie_add_child(trie_t *t, trie_node_t *parent, trie_node_t *child) {
+
+    if ((parent->child_count + 1 > parent->hash_size) && (parent->hash_size < TRIE_MAX_HASH_SIZE)) {
+        trie_node_hash_resize(t, parent, parent->hash_size * 2);
+    }
+    unsigned int pos = (int)child->key % parent->hash_size;
+    child->next = parent->child_hash[pos];
+    parent->child_hash[pos] = child;
+    parent->child_count++;
+    t->node_count++;
+    return 1;
+}
+
+int trie_remove_child(trie_t *t, trie_node_t *parent, trie_node_t *child) {
+    trie_node_t *curr, *prev = NULL;
+    unsigned int pos = (int)child->key % parent->hash_size;
+    curr = parent->child_hash[pos];
+    while (curr && curr != child) {
+        prev = curr;
+        curr = curr->next;
+    }
+    if (curr == NULL) {
+        // Not found. Can't be removed.
+        return 0;
+    }
+
+    if (prev) {
+        prev->next = curr->next;
+    }
+    else {
+        parent->child_hash[pos] = curr->next;
+    }
+
+    TRIEFREE(t, child);
+    parent->child_count--;
+    t->node_count--;
+    return 1;
+}
 
 int trie_add(trie_t *t, trie_key_t *key, TRIE_DATA value)
 {
@@ -285,44 +344,19 @@ int trie_add(trie_t *t, trie_key_t *key, TRIE_DATA value)
 
     i = 0;
     parent = t->root;
-    curr = t->root->children;
     while(i < key->size)
     {
         prev = NULL;
         KEY_CHAR_READ(key, i, &ch);
-        
-        while(curr && curr->key < ch) {
-            prev = curr;
-            curr = curr->next;
-        }
-        if ((curr && curr->key != ch) || (curr == NULL && prev)) {
-            curr = NODECREATE(t, ch, (TRIE_DATA)0);
-            if (!curr){
-                return 0;
-            }
 
-            if (!prev) {
-                curr->next = parent->children;
-                parent->children = curr;
-            }
-            else {
-                curr->next = prev->next;
-                prev->next = curr;
-            }
-            t->node_count++;
-        }
+        unsigned int pos = (int)ch % parent->hash_size;
+        curr = trie_get_child(parent, ch);
         if (!curr) {
             curr = NODECREATE(t, ch, (TRIE_DATA)0);
-            if (!curr){
-                return 0;
-            }
-
-            curr->next = parent->children;
-            parent->children = curr;
-            t->node_count++;
+            trie_add_child(t, parent, curr);
         }
+
         parent = curr;
-        curr = curr->children;
         i++;
     }
 
@@ -339,97 +373,100 @@ int trie_add(trie_t *t, trie_key_t *key, TRIE_DATA value)
     return 1;
 }
 
-// Algorithm:  First traverse the key and reverse the linked-list of children,
-// while reversing, move the branched nodes to the head then traverse back and
-// try to delete the node if no children is associated with it. Harder to implement
-// however performance is better as we iterate key only once.
-// Complexity: O(m)
-int trie_del(trie_t *t, trie_key_t *key)
-{
-    unsigned int i, found;
-    trie_node_t *curr, *prev, *it, *parent;
+int trie_del(trie_t *t, trie_key_t *key) {
+    int i = 0, found = 1;
+    trie_node_t *curr, *prev, *parent;
     TRIE_CHAR ch;
+    trie_node_t **parents = malloc(sizeof(trie_node_t *) * key->size + 1);
+    parents[0] = curr = t->root;
+    for(int j = 1; j < key->size; j++) parents[j] = NULL;
 
-    // iterate forward and reverse the linked-list
-    found = 1;
-    i = 0;
-    parent = t->root;
-    curr = t->root->children;
-    while(i < key->size)
-    {
+    while(i < key->size) {
         KEY_CHAR_READ(key, i, &ch);
-        prev = it = curr;
-        while(it && it->key != ch) {
-            prev = it;
-            it=it->next;
-        }
-        if (!it) {
-            found = 0;
-            break; // should be rollbacked
-        }
-        if (it != curr) {
-            // curr points to head of next-list here. move the branched item
-            // to head(by pointing to curr) for latter back-traversing.
-            prev->next = it->next;
-            it->next = curr;
-        }
+        curr = trie_get_child(curr, ch);
+        prev = NULL;
 
-        curr = it->children;
-        it->children = parent;
-        parent = it;
-        i++;
-    }
-
-    // key is found, but do we really have added it?
-    found = found && parent->value;
-
-    // remove key
-    if (found) {
-        parent->value = 0;
-    }
-
-    // traverse backwards
-    prev = curr;
-    curr = parent;
-    while(i--)
-    {
-        it = curr->children;
-        curr->children = prev;
-
-        // no-child and no-val and item is added/found?
-        if (found && !curr->children && !curr->value) {
-            // we know curr == it->children as we move it to head before.
-            prev = curr->next;
-            NODEFREE(t, curr);
-            t->node_count--;
-        } else {
+        while(curr && curr->key != ch) {
             prev = curr;
+            curr = curr->next;
         }
-        curr = it;
+        if (!curr) {
+            found = 0;
+            break;
+        }
+
+        parents[++i] = curr;
     }
-    t->root->children = prev;
+
+    found = found && curr->value;
+    if (found) {
+        curr->value = 0;
+    }
+
     if (found) {
         t->item_count--;
         t->dirty = 1;
     }
 
+    while (i) {
+        curr = parents[i];
+
+        if ((!curr->child_count) && (!curr->value)) {
+            // TODO: Check response for success
+            trie_remove_child(t, parents[i-1], curr);
+        }
+        i--;
+    }
+
+    free(parents);
     return found;
 }
 
-char trie_node_child_count(trie_node_t *t) {
-    char count = 0;
-    t = t->children;
-    while(t != NULL) {
-        count++;
-        t = t->next;
+int trie_node_hash_resize(trie_t *t, trie_node_t *node, int new_size) {
+    TRIE_CHILD_HASH old_hash = node->child_hash;
+    unsigned short int old_size = node->hash_size;
+
+    TRIE_CHILD_HASH new_hash = TRIEMALLOC(t, sizeof(trie_node_t*) * new_size);
+    for (int i = 0; i < new_size; i++) new_hash[i] = NULL;
+
+    unsigned short int pos;
+    trie_node_t *current;
+    for(int i = 0; i < old_size; i++) {
+        current = old_hash[i];
+        while (current) {
+            pos = (int) current->key % new_size;
+            new_hash[pos] = current;
+            current = current->next;
+        }
     }
-    return count;
+    node->child_hash = new_hash;
+    node->hash_size = new_size;
+    TRIEFREE(t, old_hash);
+}
+
+trie_node_t **trie_node_children(trie_node_t *node) {
+    if (node->child_count == 0) return NULL;
+    unsigned int children_offset = 0;
+    trie_node_t **children = (trie_node_t*)malloc(sizeof(trie_node_t*) * node->child_count);
+    for (int i = 0; i < node->child_count; i++) {
+        children[i] = NULL;
+    }
+    trie_node_t *result_head = NULL, *current, *hash_head;
+    for(int i = 0; i < node->hash_size; i++) {
+        current = node->child_hash[i];
+        while (current) {
+            children[children_offset++] = current;
+            current = current->next;
+        }
+    }
+    return children;
+
 }
 
 int trie_node_serializer(trie_node_t *t, char *s, unsigned long *node_offset, TRIE_DATA *value_ptrs, unsigned long *value_offset) {
     unsigned long s_offset = *node_offset * TRIE_NODE_SIZE;
     unsigned long value_idx;
-    char child_count = trie_node_child_count(t);
+    unsigned char child_count = t->child_count;
     char * i_ptr = s + s_offset;
     trie_node_t *child;
 
@@ -447,11 +484,12 @@ int trie_node_serializer(trie_node_t *t, char *s, unsigned long *node_offset, TR
     memcpy(i_ptr + 1 + sizeof(value_idx), &child_count, sizeof(char));
     *node_offset = *node_offset + 1;
 
-    child = t->children;
-    while(child) {
+    trie_node_t ** children = trie_node_children(t);
+    for (int i = 0; i < child_count; i++) {
+        child = children[i];
         trie_node_serializer(child, s, node_offset, value_ptrs, value_offset);
-        child = child->next;
     }
+    free(children);
 
     return 0;
 }
@@ -469,21 +507,11 @@ trie_node_t *trie_node_deserializer(trie_t *trie, char *s, unsigned long *node_o
 
     TRIE_DATA *value = value_ptrs[value_idx];
 
-    uintptr_t *children = (uintptr_t *)malloc(child_count * sizeof(uintptr_t));
-
-    // Create an array of nodes, then reverse it to keep original order
     trie_node_t *node = NODECREATE(trie, key, value);
     for(int i = 0; i < child_count; i++) {
         *node_offset = *node_offset + 1;
-        children[i] = (void *)trie_node_deserializer(trie, s, node_offset, value_ptrs);
+        trie_add_child(trie, node, (trie_node_t *)trie_node_deserializer(trie, s, node_offset, value_ptrs));
     }
-    for(int i = child_count - 1; i >= 0; i--) {
-        trie_node_t *child = (trie_node_t *)children[i];
-        child->next = node->children;
-        node->children = child;
-    }
-    free(children);
-
 
     return node;
 }
@@ -600,15 +628,14 @@ void _suffixes(trie_node_t *p, trie_key_t *key, unsigned long index,
     if (index == key->alloc_size) {
         return;
     }
-    p = p->children;
-    while(p){
-        KEY_CHAR_WRITE(key, index, p->key);
+    trie_node_t ** children = trie_node_children(p);
+    for(int i = 0; i < p->child_count; i++) {
+        KEY_CHAR_WRITE(key, index, children[i]->key);
         key->size = index+1;
         
-        _suffixes(p, key, index+1, cbk, cbk_arg);
-      
-        p = p->next;
+        _suffixes(children[i], key, index+1, cbk, cbk_arg);
     }
+    free(children);
 }
 
 void trie_suffixes(trie_t *t, trie_key_t *key, unsigned long max_depth, 
@@ -704,76 +731,76 @@ iter_t *trie_itersuffixes_reset(iter_t *iter)
 
 iter_t *trie_itersuffixes_next(iter_t *iter)
 {
-    iter_pos_t *ip;
-    iter_pos_t ipos;
-    int found;
-    TRIE_DATA val;
+    // iter_pos_t *ip;
+    // iter_pos_t ipos;
+    // int found;
+    // TRIE_DATA val;
 
-    found = 0;
-    while(1)
-    {
-        // found a candidate?
-        if (found) {
-            break;
-        }
+    // found = 0;
+    // while(1)
+    // {
+    //     // found a candidate?
+    //     if (found) {
+    //         break;
+    //     }
 
-        // trie changed during iteration?
-        if (iter->trie->dirty) {
-            iter->fail = 1;
-            iter->fail_reason = CHG_WHILE_ITER;
-            break;
-        }
+    //     // trie changed during iteration?
+    //     if (iter->trie->dirty) {
+    //         iter->fail = 1;
+    //         iter->fail_reason = CHG_WHILE_ITER;
+    //         break;
+    //     }
 
-        // start processing the stack
-        ip = PEEKI(iter->stack0);
-        if (!ip) { // no elem in stack0
-            iter->last = 1;
-            break;
-        }
+    //     // start processing the stack
+    //     ip = PEEKI(iter->stack0);
+    //     if (!ip) { // no elem in stack0
+    //         iter->last = 1;
+    //         break;
+    //     }
 
-        // check if the search string is already in the trie.
-        if (iter->first) {
-            iter->first = 0;
-            val = ip->iptr->value;
-            ip->iptr = ip->iptr->children;
-            ip->op.index++;
-            if (val) {
-                break;
-            }
-        }
+    //     // check if the search string is already in the trie.
+    //     if (iter->first) {
+    //         iter->first = 0;
+    //         val = ip->iptr->value;
+    //         ip->iptr = ip->iptr->children;
+    //         ip->op.index++;
+    //         if (val) {
+    //             break;
+    //         }
+    //     }
 
-        if (!ip->iptr) {
-            POPI(iter->stack0);
-            continue;
-        }
+    //     if (!ip->iptr) {
+    //         POPI(iter->stack0);
+    //         continue;
+    //     }
 
-        KEY_CHAR_WRITE(iter->key, ip->op.index, ip->iptr->key);
-        iter->key->size = ip->op.index+1;
+    //     KEY_CHAR_WRITE(iter->key, ip->op.index, ip->iptr->key);
+    //     iter->key->size = ip->op.index+1;
 
-        if (ip->pos == 0 && ip->iptr->value) {
-            found = 1;
-        }
+    //     if (ip->pos == 0 && ip->iptr->value) {
+    //         found = 1;
+    //     }
 
-        if (ip->pos == 0) {
-            ip->pos = 1;
-            if (ip->iptr->children) {
-                if (ip->op.index+1 < (iter->key->alloc_size)) {
-                    ipos.iptr = ip->iptr->children;
-                    ipos.op.index = ip->op.index+1;
-                    ipos.pos = 0;
-                    PUSHI(iter->stack0, &ipos);
-                }
-            }
-        } else if (ip->pos == 1) {
-            POPI(iter->stack0);
-            if (ip->iptr->next) {
-                ipos.iptr = ip->iptr->next;
-                ipos.op.index = ip->op.index;
-                ipos.pos = 0;
-                PUSHI(iter->stack0, &ipos);
-            }
-        }
-    }
+    //     if (ip->pos == 0) {
+    //         ip->pos = 1;
+    //         if (ip->iptr->children) {
+    //             if (ip->op.index+1 < (iter->key->alloc_size)) {
+    //                 ipos.iptr = ip->iptr->children;
+    //                 ipos.op.index = ip->op.index+1;
+    //                 ipos.pos = 0;
+    //                 PUSHI(iter->stack0, &ipos);
+    //             }
+    //         }
+    //     } else if (ip->pos == 1) {
+    //         POPI(iter->stack0);
+    //         if (ip->iptr->next) {
+    //             ipos.iptr = ip->iptr->next;
+    //             ipos.op.index = ip->op.index;
+    //             ipos.pos = 0;
+    //             PUSHI(iter->stack0, &ipos);
+    //         }
+    //     }
+    // }
 
     return iter;
 }
@@ -827,28 +854,28 @@ void trie_prefixes(trie_t *t, trie_key_t *key, unsigned long max_depth,
 iter_t *trie_iterprefixes_init(trie_t *t, trie_key_t *key, unsigned long max_depth)
 {
     iter_t *iter;
-    trie_node_t *prefix;
-    unsigned long real_size;
+    // trie_node_t *prefix;
+    // unsigned long real_size;
 
-    if (key->size == 0) {
-        return NULL;
-    }
+    // if (key->size == 0) {
+    //     return NULL;
+    // }
 
-    // search first char
-    real_size = key->size;
-    key->size = 1;
-    prefix = _trie_prefix(t->root, key);
-    if (!prefix) {
-        return NULL;
-    }
-    key->size = real_size;
+    // // search first char
+    // real_size = key->size;
+    // key->size = 1;
+    // prefix = _trie_prefix(t->root, key);
+    // if (!prefix) {
+    //     return NULL;
+    // }
+    // key->size = real_size;
 
-    // create the iterator obj
-    iter = ITERATORCREATE(t, key, max_depth, key->size, max_depth, 0);
-    if (!iter) {
-        return NULL;
-    }
-    trie_iterprefixes_reset(iter);
+    // // create the iterator obj
+    // iter = ITERATORCREATE(t, key, max_depth, key->size, max_depth, 0);
+    // if (!iter) {
+    //     return NULL;
+    // }
+    // trie_iterprefixes_reset(iter);
 
     return iter;
 }
@@ -1048,95 +1075,95 @@ void _undo(trie_key_t *key, iter_op_t *op)
 void _corrections(trie_t * t, trie_node_t *pprefix, trie_key_t *key, 
     unsigned long c_index, unsigned long c_depth, trie_enum_cbk_t cbk, void* cbk_arg)
 {
-    unsigned long ksize,kchsize;
-    trie_key_t pk;
-    trie_node_t *prefix,*p;
-    TRIE_CHAR ch;
-    iter_op_t op;
+    // unsigned long ksize,kchsize;
+    // trie_key_t pk;
+    // trie_node_t *prefix,*p;
+    // TRIE_CHAR ch;
+    // iter_op_t op;
 
-    // search prefix
-    prefix = pprefix;
-    if (c_index > 0) {
-        if (c_index-1 >= key->size) {
-            return;
-        }
-        KEY_CHAR_READ(key, c_index-1, &ch);
-        pk.s = (char *)&ch; pk.size = 1; pk.char_size = key->char_size;
-        prefix = _trie_prefix(pprefix, &pk);
-        if (!prefix) {
-            return;
-        }
-    }
+    // // search prefix
+    // prefix = pprefix;
+    // if (c_index > 0) {
+    //     if (c_index-1 >= key->size) {
+    //         return;
+    //     }
+    //     KEY_CHAR_READ(key, c_index-1, &ch);
+    //     pk.s = (char *)&ch; pk.size = 1; pk.char_size = key->char_size;
+    //     prefix = _trie_prefix(pprefix, &pk);
+    //     if (!prefix) {
+    //         return;
+    //     }
+    // }
 
-    // search suffix (which will complete the search for the full key)
-    ksize = key->size;
-    kchsize = key->char_size;
-    pk.s = &key->s[c_index*kchsize]; pk.size = ksize-c_index; 
-    pk.char_size = key->char_size;
-    p = _trie_prefix(prefix, &pk);
-    if (p && p->value) {
-        cbk(key, p, cbk_arg);
-    }
+    // // search suffix (which will complete the search for the full key)
+    // ksize = key->size;
+    // kchsize = key->char_size;
+    // pk.s = &key->s[c_index*kchsize]; pk.size = ksize-c_index; 
+    // pk.char_size = key->char_size;
+    // p = _trie_prefix(prefix, &pk);
+    // if (p && p->value) {
+    //     cbk(key, p, cbk_arg);
+    // }
 
-    // check bounds/depth
-    if ((c_index > ksize) || (c_depth == 0)) {
-        return;
-    }
+    // // check bounds/depth
+    // if ((c_index > ksize) || (c_depth == 0)) {
+    //     return;
+    // }
 
-    // deletion
-    if (ksize > 1 && c_index < ksize)
-    {
-        op.type = DELETE; op.index = 0; op.auxindex = c_index;
-        _do(key, &op);
+    // // deletion
+    // if (ksize > 1 && c_index < ksize)
+    // {
+    //     op.type = DELETE; op.index = 0; op.auxindex = c_index;
+    //     _do(key, &op);
 
-        _corrections(t, t->root, key, 0, c_depth-1, cbk, cbk_arg);
+    //     _corrections(t, t->root, key, 0, c_depth-1, cbk, cbk_arg);
 
-        _undo(key, &op);
-    }
+    //     _undo(key, &op);
+    // }
 
-    // transposition (prefix + suffix[1] + suffix[0] + suffix[2:])
-    if (ksize != 0 && c_index < ksize-1) 
-    {
-        op.type = TRANSPOSE; op.index = c_index;
-        _do(key, &op);
+    // // transposition (prefix + suffix[1] + suffix[0] + suffix[2:])
+    // if (ksize != 0 && c_index < ksize-1) 
+    // {
+    //     op.type = TRANSPOSE; op.index = c_index;
+    //     _do(key, &op);
 
-        _corrections(t, pprefix, key, c_index, c_depth-1, cbk, cbk_arg);
+    //     _corrections(t, pprefix, key, c_index, c_depth-1, cbk, cbk_arg);
 
-        _undo(key, &op);
-    }
+    //     _undo(key, &op);
+    // }
 
-    // insertion (prefix + x + suffix[:])
-    p = prefix->children;
-    while(p)
-    {
-        op.type = INSERT; op.index = c_index; op.ich = p->key;
-        _do(key, &op);
+    // // insertion (prefix + x + suffix[:])
+    // p = prefix->children;
+    // while(p)
+    // {
+    //     op.type = INSERT; op.index = c_index; op.ich = p->key;
+    //     _do(key, &op);
 
-        _corrections(t, pprefix, key, c_index, c_depth-1, cbk, cbk_arg);
+    //     _corrections(t, pprefix, key, c_index, c_depth-1, cbk, cbk_arg);
 
-        _undo(key, &op);
+    //     _undo(key, &op);
 
-        p = p->next;
-    }
+    //     p = p->next;
+    // }
 
-    // change (prefix + x + suffix[1:])
-    if (c_index < ksize)
-    {
-        p = prefix->children;
-        while(p) 
-        {
-            op.type = CHANGE; op.index = c_index; op.ich = p->key;
-            _do(key, &op);
+    // // change (prefix + x + suffix[1:])
+    // if (c_index < ksize)
+    // {
+    //     p = prefix->children;
+    //     while(p) 
+    //     {
+    //         op.type = CHANGE; op.index = c_index; op.ich = p->key;
+    //         _do(key, &op);
 
-            _corrections(t, pprefix, key, c_index, c_depth-1, cbk, cbk_arg);
+    //         _corrections(t, pprefix, key, c_index, c_depth-1, cbk, cbk_arg);
 
-            _undo(key, &op);
+    //         _undo(key, &op);
 
-            p = p->next;
-        }
-    }
+    //         p = p->next;
+    //     }
+    // }
 
-    _corrections(t, prefix, key, c_index+1, c_depth, cbk, cbk_arg);
+    // _corrections(t, prefix, key, c_index+1, c_depth, cbk, cbk_arg);
 }
 
 void trie_corrections(trie_t *t, trie_key_t *key, unsigned long max_depth,
@@ -1207,172 +1234,172 @@ iter_t *trie_itercorrections_reset(iter_t *iter)
 
 iter_t *trie_itercorrections_next(iter_t *iter)
 {
-    trie_key_t pk;
-    iter_pos_t *ip;
-    iter_stack_t *k0,*k1;
-    trie_node_t *prefix,*p;
-    iter_pos_t ipos;
-    int found;
-    TRIE_CHAR ch;
+    // trie_key_t pk;
+    // iter_pos_t *ip;
+    // iter_stack_t *k0,*k1;
+    // trie_node_t *prefix,*p;
+    // iter_pos_t ipos;
+    // int found;
+    // TRIE_CHAR ch;
 
-    k0 = (iter_stack_t *)iter->stack0;
-    k1 = (iter_stack_t *)iter->stack1;
-    found = 0;
-    while(1)
-    {
-        if (found)
-        {
-            return iter;
-        }
+    // k0 = (iter_stack_t *)iter->stack0;
+    // k1 = (iter_stack_t *)iter->stack1;
+    // found = 0;
+    // while(1)
+    // {
+    //     if (found)
+    //     {
+    //         return iter;
+    //     }
 
-        ip = PEEKI(k0);
-        if (!ip) {
-            iter->last = 1;
-            return iter;
-        }
+    //     ip = PEEKI(k0);
+    //     if (!ip) {
+    //         iter->last = 1;
+    //         return iter;
+    //     }
 
-        // previous key changes are delayed to this iteration.
-        if (iter->depth_reached)
-        {
-            _undo(iter->key, &ip->op);
-            POPI(k0);
-            iter->depth_reached = 0;
-            continue;
-        }
+    //     // previous key changes are delayed to this iteration.
+    //     if (iter->depth_reached)
+    //     {
+    //         _undo(iter->key, &ip->op);
+    //         POPI(k0);
+    //         iter->depth_reached = 0;
+    //         continue;
+    //     }
 
-        if (iter->keylen_reached)
-        {
-            ip = POPI(k1);
-            _undo(iter->key, &ip->op);
-            ip = POPI(k0);
-            _undo(iter->key, &ip->op);
-            iter->keylen_reached = 0; 
-            continue;
-        }
+    //     if (iter->keylen_reached)
+    //     {
+    //         ip = POPI(k1);
+    //         _undo(iter->key, &ip->op);
+    //         ip = POPI(k0);
+    //         _undo(iter->key, &ip->op);
+    //         iter->keylen_reached = 0; 
+    //         continue;
+    //     }
 
-        prefix = ip->prefix;
-        if (ip->op.index > 0) {
-            if (ip->op.index-1 >= iter->key->size) {
-                ip = POPI(k1);
-                _undo(iter->key, &ip->op);
-                ip = POPI(k0);
-                _undo(iter->key, &ip->op);
-                continue;
-            }
-            KEY_CHAR_READ(iter->key, ip->op.index-1, &ch);
-            pk.s = (char *)&ch; pk.size = 1; pk.char_size = iter->key->char_size;
-            prefix = _trie_prefix(ip->prefix, &pk);
-            if (!prefix) {
-                ip = POPI(k1);
-                _undo(iter->key, &ip->op);
-                ip = POPI(k0);
-                _undo(iter->key, &ip->op);
-                continue;
-            }
-        }
+    //     prefix = ip->prefix;
+    //     if (ip->op.index > 0) {
+    //         if (ip->op.index-1 >= iter->key->size) {
+    //             ip = POPI(k1);
+    //             _undo(iter->key, &ip->op);
+    //             ip = POPI(k0);
+    //             _undo(iter->key, &ip->op);
+    //             continue;
+    //         }
+    //         KEY_CHAR_READ(iter->key, ip->op.index-1, &ch);
+    //         pk.s = (char *)&ch; pk.size = 1; pk.char_size = iter->key->char_size;
+    //         prefix = _trie_prefix(ip->prefix, &pk);
+    //         if (!prefix) {
+    //             ip = POPI(k1);
+    //             _undo(iter->key, &ip->op);
+    //             ip = POPI(k0);
+    //             _undo(iter->key, &ip->op);
+    //             continue;
+    //         }
+    //     }
 
-        // "only once" operations go under (pos == 0)
-        if (ip->pos == 0)
-        {
-            _do(iter->key, &ip->op); 
+    //     // "only once" operations go under (pos == 0)
+    //     if (ip->pos == 0)
+    //     {
+    //         _do(iter->key, &ip->op); 
 
-            pk.s = &iter->key->s[ip->op.index*iter->key->char_size]; 
-            pk.size = iter->key->size-ip->op.index; 
-            pk.char_size = iter->key->char_size;
-            p = _trie_prefix(prefix, &pk);
-            if (p && p->value) {
-                found = 1;
-            }
-        }
+    //         pk.s = &iter->key->s[ip->op.index*iter->key->char_size]; 
+    //         pk.size = iter->key->size-ip->op.index; 
+    //         pk.char_size = iter->key->char_size;
+    //         p = _trie_prefix(prefix, &pk);
+    //         if (p && p->value) {
+    //             found = 1;
+    //         }
+    //     }
 
-        if (ip->op.depth == 0)
-        {
-            iter->depth_reached = 1;
-            continue;
-        }
+    //     if (ip->op.depth == 0)
+    //     {
+    //         iter->depth_reached = 1;
+    //         continue;
+    //     }
 
-        if (ip->op.index > iter->key->size)
-        {
-            iter->keylen_reached = 1;
-            continue;
-        }
+    //     if (ip->op.index > iter->key->size)
+    //     {
+    //         iter->keylen_reached = 1;
+    //         continue;
+    //     }
 
-        // hold the doed() but not undoed() non-noop operations in history stack
-        // that is processed first time.(in our current implementation we process 
-        // the same op multiple times so simply check if it was processed before.
-        if (ip->op.type != INDEXCHG && ip->pos == 0)
-        {
-            PUSHI(k1, ip);
-        }
+    //     // hold the doed() but not undoed() non-noop operations in history stack
+    //     // that is processed first time.(in our current implementation we process 
+    //     // the same op multiple times so simply check if it was processed before.
+    //     if (ip->op.type != INDEXCHG && ip->pos == 0)
+    //     {
+    //         PUSHI(k1, ip);
+    //     }
 
-        if (ip->pos == 0) {
-            ip->pos = 1;
-            if (iter->key->size > 1 && ip->op.index < iter->key->size) {
-                ipos.pos = 0; ipos.op.type = DELETE; ipos.op.index = 0; 
-                ipos.op.auxindex = ip->op.index; ipos.op.depth = ip->op.depth-1; 
-                ipos.iptr = NULL; ipos.prefix = iter->trie->root;
-                PUSHI(k0, &ipos);
-                continue;
-            }
-        }
+    //     if (ip->pos == 0) {
+    //         ip->pos = 1;
+    //         if (iter->key->size > 1 && ip->op.index < iter->key->size) {
+    //             ipos.pos = 0; ipos.op.type = DELETE; ipos.op.index = 0; 
+    //             ipos.op.auxindex = ip->op.index; ipos.op.depth = ip->op.depth-1; 
+    //             ipos.iptr = NULL; ipos.prefix = iter->trie->root;
+    //             PUSHI(k0, &ipos);
+    //             continue;
+    //         }
+    //     }
         
-        if (ip->pos == 1) {
-            ip->pos = 2;
-            if (iter->key->size != 0 && ip->op.index+1 < iter->key->size)
-            {
-                ipos.pos = 0; ipos.op.type = TRANSPOSE; 
-                ipos.op.index = ip->op.index; ipos.op.depth = ip->op.depth-1; 
-                ipos.iptr = NULL; ipos.prefix = ip->prefix;
-                PUSHI(k0, &ipos);
-                continue;
-            }
-        }
+    //     if (ip->pos == 1) {
+    //         ip->pos = 2;
+    //         if (iter->key->size != 0 && ip->op.index+1 < iter->key->size)
+    //         {
+    //             ipos.pos = 0; ipos.op.type = TRANSPOSE; 
+    //             ipos.op.index = ip->op.index; ipos.op.depth = ip->op.depth-1; 
+    //             ipos.iptr = NULL; ipos.prefix = ip->prefix;
+    //             PUSHI(k0, &ipos);
+    //             continue;
+    //         }
+    //     }
             
-        if (ip->pos == 2) {
-            if (!ip->iptr) {
-                ip->iptr = prefix->children;
-            } else {
-                ip->iptr = ip->iptr->next;
-            }           
+    //     if (ip->pos == 2) {
+    //         if (!ip->iptr) {
+    //             ip->iptr = prefix->children;
+    //         } else {
+    //             ip->iptr = ip->iptr->next;
+    //         }           
             
-            if (ip->iptr) {
-                ipos.pos = 0; ipos.op.type = INSERT; ipos.op.index = ip->op.index; 
-                ipos.op.depth = ip->op.depth-1; ipos.iptr = NULL; 
-                ipos.op.ich = ip->iptr->key; ipos.prefix = ip->prefix;
-                PUSHI(k0, &ipos);
-                continue;
-            } 
+    //         if (ip->iptr) {
+    //             ipos.pos = 0; ipos.op.type = INSERT; ipos.op.index = ip->op.index; 
+    //             ipos.op.depth = ip->op.depth-1; ipos.iptr = NULL; 
+    //             ipos.op.ich = ip->iptr->key; ipos.prefix = ip->prefix;
+    //             PUSHI(k0, &ipos);
+    //             continue;
+    //         } 
 
-            ip->pos = 3;
-        }
+    //         ip->pos = 3;
+    //     }
         
-        if (ip->pos == 3) {
-            if (ip->op.index < iter->key->size) 
-            {
-                if (!ip->iptr) {
-                    ip->iptr = prefix->children;
-                } else {
-                    ip->iptr = ip->iptr->next;
-                }            
+    //     if (ip->pos == 3) {
+    //         if (ip->op.index < iter->key->size) 
+    //         {
+    //             if (!ip->iptr) {
+    //                 ip->iptr = prefix->children;
+    //             } else {
+    //                 ip->iptr = ip->iptr->next;
+    //             }            
                 
-                if (ip->iptr) {
-                    ipos.pos = 0; ipos.op.type = CHANGE; 
-                    ipos.op.index = ip->op.index; ipos.op.depth = ip->op.depth-1; 
-                    ipos.iptr = NULL; ipos.op.ich = ip->iptr->key;
-                    ipos.prefix = ip->prefix;
-                    PUSHI(k0, &ipos);
-                    continue;
-                }
-            }
-            ip->pos = 4;
-        }
+    //             if (ip->iptr) {
+    //                 ipos.pos = 0; ipos.op.type = CHANGE; 
+    //                 ipos.op.index = ip->op.index; ipos.op.depth = ip->op.depth-1; 
+    //                 ipos.iptr = NULL; ipos.op.ich = ip->iptr->key;
+    //                 ipos.prefix = ip->prefix;
+    //                 PUSHI(k0, &ipos);
+    //                 continue;
+    //             }
+    //         }
+    //         ip->pos = 4;
+    //     }
 
-        POPI(k0);
-        ipos.pos = 0; ipos.op.type = INDEXCHG; ipos.op.index = ip->op.index+1; 
-        ipos.op.depth = ip->op.depth; ipos.iptr = NULL;
-        ipos.prefix = prefix;
-        PUSHI(k0, &ipos);
-    }
+    //     POPI(k0);
+    //     ipos.pos = 0; ipos.op.type = INDEXCHG; ipos.op.index = ip->op.index+1; 
+    //     ipos.op.depth = ip->op.depth; ipos.iptr = NULL;
+    //     ipos.prefix = prefix;
+    //     PUSHI(k0, &ipos);
+    // }
 }
 
 void trie_debug_print_key(trie_key_t *k)

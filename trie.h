@@ -37,11 +37,15 @@ typedef struct trie_key_s {
     unsigned long alloc_size; // max allocated size of the string buffer. (in characters)
 } trie_key_t;
 
+typedef struct trie_node_s **TRIE_CHILD_HASH;
+
 typedef struct trie_node_s {
     TRIE_CHAR key;
     TRIE_DATA value;
+    unsigned short int child_count;
+    unsigned short int hash_size;
+    TRIE_CHILD_HASH child_hash;
     struct trie_node_s *next;
-    struct trie_node_s *children;
 } trie_node_t;
 
 typedef struct trie_s {
@@ -130,6 +134,8 @@ int trie_add(trie_t *t, trie_key_t *key, TRIE_DATA value);
 int trie_del(trie_t *t, trie_key_t *key);
 trie_serialized_t *trie_serialize(trie_t *t);
 trie_t *trie_deserialize(trie_serialized_t *s);
+trie_node_t *trie_get_child(trie_node_t *node, TRIE_CHAR ch);
+int trie_add_child(trie_t *t, trie_node_t *parent, trie_node_t *child);
 
 // Enumeration functions
 // Suffix
