@@ -24,7 +24,7 @@
 #endif
 #define TRIE_DATA uintptr_t
 #define TRIE_NODE_SIZE (sizeof(char) + sizeof(unsigned long) + sizeof(char))  // key + value + children_count
-#define TRIE_MIN_HASH_SIZE 4
+#define TRIE_MIN_HASH_SIZE 1
 #define TRIE_MAX_HASH_SIZE 32
 
 #if defined(MS_WINDOWS)
