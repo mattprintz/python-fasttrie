@@ -1,4 +1,5 @@
 *.py[c|o]
+_*.so
 .DS_Store
 *.sql
 *.bz2
