@@ -463,3 +463,56 @@ class TestBasic(unittest.TestCase):
                     f.write(stat)
                     f.write('\n')
     """
+
+    def test_init(self):
+        tr1 = fasttrie.Trie([('a', 1), ('b', 2)])
+        tr2 = fasttrie.Trie(a=1, b=2)
+        self.assertEqual(sorted(tr1.items()), sorted(tr2.items()))
+        del tr1
+        del tr2
+
+
+    def test_clear(self):
+        val = 'foo'
+        init_ref_count = sys.getrefcount(val)
+        tr = fasttrie.Trie(i=val, j=val, k=None)
+        self.assertEqual(len(tr), 3)
+        self.assertEqual(sys.getrefcount(val), init_ref_count + 2)
+        self.assertEqual(sorted(tr.items()), [('i', 'foo'), ('j', 'foo'), ('k', None)])
+        self.assertEqual(sys.getrefcount(val), init_ref_count + 2)
+        tr.clear()
+        self.assertEqual(len(tr), 0)
+        self.assertEqual(sys.getrefcount(val), init_ref_count)
+        self.assertEqual(sorted(tr.items()), [])
+
+
+    def test_get(self):
+        tr = fasttrie.Trie(a=1, b=None)
+        self.assertEqual(tr.get('a'), 1)
+        self.assertEqual(tr.get('b'), None)
+        self.assertEqual(tr.get('c'), None)
+        self.assertEqual(tr.get('d', 'foo'), 'foo')
+        self.assertEqual(tr.get('a', 'foo'), 1)
+
+
+    def test_update(self):
+        tr = fasttrie.Trie()
+        tr.update([('a', 1), ('b', 2)])
+        self.assertEqual(sorted(tr.items()), [('a', 1), ('b', 2)])
+        tr.update(b=3, c=4)
+        self.assertEqual(sorted(tr.items()), [('a', 1), ('b', 3), ('c', 4)])
+        tr.update({'c': 5, 'd': 6})
+        self.assertEqual(sorted(tr.items()), [('a', 1), ('b', 3), ('c', 5), ('d', 6)])
+        tr2 = fasttrie.Trie(e=7, a=0)
+        tr.update(tr2)
+        self.assertEqual(sorted(tr.items()), [('a', 0), ('b', 3), ('c', 5), ('d', 6), ('e', 7)])
+
+
+    def _test_iter(self):
+        print("\nhello!")
+        tr = self._create_trie()
+        l = list(itertools.islice(tr, 5))
+        print("l", l)
+        it = iter(tr)
+        n = next(it)
+        print("foo:", n)

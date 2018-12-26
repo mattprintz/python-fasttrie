@@ -5,8 +5,7 @@
 
 */
 
-#include "config.h"
-#include "trie.h"
+#include "_fasttrie.h"
 
 // globals
 static PyObject *FasttrieError;
@@ -291,41 +290,17 @@ static PyObject *Trie_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 
 static int Trie_init(PyObject *self, PyObject *args, PyObject *kwds) 
 {
-    int i, tup_size;
-    PyObject *arg, *item, *key, *value;
-    if (!PyArg_ParseTuple(args, "|O", &arg)) {
+    PyObject *result;
+    // Temporarily increase refcount so args and kwds doesn't get GC'd
+    Py_XINCREF(args);
+    Py_XINCREF(kwds);
+
+    result = Trie_update(self, args, kwds);
+    if (result == NULL || PyErr_Occurred())
         return -1;
-    }
-    if (arg && PyDict_Check(arg)) {
-        arg = PyDict_Items(arg);
-    }
-    if(kwds) {
-        if (arg) {
-            arg = PySequence_Concat(PySequence_Tuple(arg),  PySequence_Tuple(PyDict_Items(kwds)));
-        }
-        else {
-            arg = PyDict_Items(kwds);
-        }
-    }
 
-    if ((arg && PySequence_Check(arg)) )  {
-
-        for (i = 0; i < PySequence_Length(arg); i++) {
-            item = PySequence_GetItem(arg, i);
-            tup_size = PySequence_Length(item);
-            if (!(PySequence_Check(item) && tup_size == 2)) {
-                PyErr_Format(PyExc_ValueError,
-                            "trie update sequence element #%zd "
-                            "has length %zd; 2 is required",
-                            i, tup_size);
-                return -1;
-            }
-            key = PySequence_GetItem(item, 0);
-            value = PySequence_GetItem(item, 1);
-            Trie_ass_sub((TrieObject *) self, key, value);
-        }
-    }
-
+    Py_XDECREF(args);
+    Py_XDECREF(kwds);
     return 0;
 }
 
@@ -449,6 +424,17 @@ int _enum_values(trie_key_t *k, trie_node_t *n, void *arg)
     return 0;
 }
 
+int _set_items(trie_key_t *k, trie_node_t *n, void *arg)
+{
+    Trie_ass_sub((TrieObject *) arg, _TKEY_AS_PyUnicode(k), (PyObject *)n->value);
+    return 0;
+}
+
+int _dec_ref_count(trie_key_t *k, trie_node_t *n, void *arg)
+{
+    Py_XDECREF((PyObject *)n->value);
+}
+
 static PyObject *Trie_keys(PyObject* selfobj, PyObject *args)
 {
     trie_key_t k;
@@ -466,7 +452,7 @@ static PyObject *Trie_keys(PyObject* selfobj, PyObject *args)
     return sfxs;
 }
 
-PyObject *Trie_items(PyObject *selfobj, PyObject *args)
+static PyObject *Trie_items(PyObject *selfobj, PyObject *args)
 {
     trie_key_t k;
     unsigned long max_depth;
@@ -498,6 +484,103 @@ static PyObject *Trie_values(PyObject* selfobj, PyObject *args)
     trie_suffixes(((TrieObject *)selfobj)->ptrie, &k, max_depth, _enum_values, values);
     
     return values;
+}
+
+static PyObject *Trie_get(PyObject* selfobj, PyObject *args, PyObject *kwds)
+{
+    const PyObject *default_value = Py_None;
+    char *key;
+    PyObject *value;
+    static char *kwlist[] = {"key", "default", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O|O", kwlist, &key, &default_value)) {
+        return NULL;
+    }
+    // Get value using subscript func
+    value = Trie_subscript(selfobj, key);
+    if (value == NULL) {
+        PyErr_Clear();
+        value = default_value;
+        Py_INCREF(value);
+    }
+    
+    return value;
+}
+
+static PyObject *Trie_update(PyObject* selfobj, PyObject *args, PyObject *kwds)
+{
+    int i, tup_size;
+    PyObject *arg = NULL, *item = NULL, *key = NULL, *value = NULL;
+    PyObject *seq = NULL, *dict = NULL;
+
+    Py_ssize_t pos;
+
+    if (!PyArg_ParseTuple(args, "|O", &arg)) {
+        return NULL;
+    }
+
+    if (arg) {
+        if (PyDict_Check(arg)) {
+            pos = 0;
+            while (PyDict_Next(arg, &pos, &key, &value)) {
+                Trie_ass_sub((TrieObject *) selfobj, key, value);
+            }
+        }
+        // Check if arg is a Trie. Probably a better way to check this, but works for now.
+        // TODO: Investigate better way to compare
+        else if (strcmp(arg->ob_type->tp_name, "Trie") == 0) {
+            // TODO: Replace this with something cleaner?
+            trie_key_t k;
+            unsigned long max_depth;
+            if (!_parse_traverse_args((TrieObject *)selfobj, PyTuple_New(0), &k, &max_depth)) return NULL;
+            trie_suffixes(((TrieObject *)arg)->ptrie, &k, max_depth, _set_items, selfobj);
+        }
+
+        if (PySequence_Check(arg))  {
+            for (i = 0; i < PySequence_Length(arg); i++) {
+                item = PySequence_GetItem(arg, i);
+                tup_size = PySequence_Length(item);
+                if (!(PySequence_Check(item) && tup_size == 2)) {
+                    PyErr_Format(PyExc_ValueError,
+                                "trie update sequence element #%zd "
+                                "has length %zd; 2 is required",
+                                i, tup_size);
+                    return NULL;
+                }
+                key = PySequence_GetItem(item, 0);
+                value = PySequence_GetItem(item, 1);
+                Trie_ass_sub((TrieObject *) selfobj, key, value);
+            }
+        }
+    }
+    if (kwds) {
+        pos = 0;
+        while (PyDict_Next(kwds, &pos, &key, &value)) {
+            Trie_ass_sub((TrieObject *) selfobj, key, value);
+        }
+    }
+
+    Py_RETURN_NONE;
+}
+
+static PyObject *Trie_clear(PyObject* selfobj, PyObject *args)
+{
+    trie_key_t k;
+    unsigned long max_depth;
+
+    if (!_parse_traverse_args((TrieObject *)selfobj, args, &k, &max_depth))
+    {
+        return NULL;
+    }
+
+    // Decrement refcount for all values in trie
+    trie_suffixes(((TrieObject *)selfobj)->ptrie, &k, max_depth, _dec_ref_count, NULL);
+
+    // Destroy existing trie and create fresh version
+    trie_destroy(((TrieObject *)selfobj)->ptrie);
+    ((TrieObject *)selfobj)->ptrie = trie_create();
+
+    Py_RETURN_NONE;
 }
 
 static PyObject *Trie_itersuffixes(PyObject* selfobj, PyObject *args)
@@ -702,7 +785,10 @@ static PyMethodDef Trie_methods[] = {
 
     {"keys", Trie_keys, METH_VARARGS, "List of keys"},
     {"values", Trie_values, METH_VARARGS, "List of values"},
-    {"items", Trie_items, METH_VARARGS, "List of values"},
+    {"items", Trie_items, METH_VARARGS, "List of items (key, value)"},
+    {"get", Trie_get, METH_VARARGS | METH_KEYWORDS, "Get an item from the trie"},
+    {"clear", Trie_clear, METH_VARARGS , "Clear all items from trie"},
+    {"update", Trie_update, METH_VARARGS | METH_KEYWORDS, "Update a trie"},
     // {"iter_suffixes", Trie_itersuffixes, METH_VARARGS, 
         // "T.iter_suffixes() -> a set-like object providing a view on T's suffixes"},
     // {"suffixes", Trie_keys, METH_VARARGS, 
