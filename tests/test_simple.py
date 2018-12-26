@@ -494,6 +494,17 @@ class TestBasic(unittest.TestCase):
         self.assertEqual(tr.get('d', 'foo'), 'foo')
         self.assertEqual(tr.get('a', 'foo'), 1)
 
+    def test_copy(self):
+        key = "aqswdefr"  # String unlikely to be used elsewhere, for accurate refcount tracking
+        tr = fasttrie.Trie(a=1, b=None)
+        tr[key] = 0
+        key_refcount = sys.getrefcount(key)
+        refcounts = (sys.getrefcount(1), sys.getrefcount(None))
+        copy = tr.copy()
+        self.assertEqual(sorted(tr.items()), sorted(copy.items()))
+        self.assertEqual(refcounts, (sys.getrefcount(1) - 1, sys.getrefcount(None) - 1))
+        # Keys do not get stored as Python objects, and therefore shouldn't increase refcounts
+        self.assertEqual(key_refcount, sys.getrefcount(key))
 
     def test_update(self):
         tr = fasttrie.Trie()

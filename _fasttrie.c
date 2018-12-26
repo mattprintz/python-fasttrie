@@ -527,7 +527,7 @@ static PyObject *Trie_update(PyObject* selfobj, PyObject *args, PyObject *kwds)
             }
         }
         // Check if arg is a Trie. Probably a better way to check this, but works for now.
-        // TODO: Investigate better way to compare
+        // TODO: Investigate better way to compare: PyObject_TypeCheck() ??
         else if (strcmp(arg->ob_type->tp_name, "Trie") == 0) {
             // TODO: Replace this with something cleaner?
             trie_key_t k;
@@ -581,6 +581,16 @@ static PyObject *Trie_clear(PyObject* selfobj, PyObject *args)
     ((TrieObject *)selfobj)->ptrie = trie_create();
 
     Py_RETURN_NONE;
+}
+
+static PyObject *Trie_copy(PyObject* selfobj, PyObject *args)
+{
+    TrieObject *copy = Trie_new((PyTypeObject *)selfobj->ob_type, PyTuple_New(0), PyDict_New());
+    trie_key_t k;
+    unsigned long max_depth;
+    if (!_parse_traverse_args((TrieObject *)selfobj, PyTuple_New(0), &k, &max_depth)) return NULL;
+    trie_suffixes(((TrieObject *)selfobj)->ptrie, &k, max_depth, _set_items, copy);
+    return copy;
 }
 
 static PyObject *Trie_itersuffixes(PyObject* selfobj, PyObject *args)
@@ -789,6 +799,7 @@ static PyMethodDef Trie_methods[] = {
     {"get", Trie_get, METH_VARARGS | METH_KEYWORDS, "Get an item from the trie"},
     {"clear", Trie_clear, METH_VARARGS , "Clear all items from trie"},
     {"update", Trie_update, METH_VARARGS | METH_KEYWORDS, "Update a trie"},
+    {"copy", Trie_copy, METH_NOARGS , "Return a shallow copy of trie with all keys/values."},
     // {"iter_suffixes", Trie_itersuffixes, METH_VARARGS, 
         // "T.iter_suffixes() -> a set-like object providing a view on T's suffixes"},
     // {"suffixes", Trie_keys, METH_VARARGS, 
