@@ -33,8 +33,8 @@
 typedef struct trie_key_s {
     char *s; // encoded string buffer
     unsigned long size; // how many characters (or code points) in encoded string
-    unsigned char char_size; // character size of the encoding in bytes
     unsigned long alloc_size; // max allocated size of the string buffer. (in characters)
+    unsigned char char_size; // character size of the encoding in bytes
 } trie_key_t;
 
 typedef struct trie_node_s **TRIE_CHILD_HASH;
@@ -81,41 +81,41 @@ typedef enum iter_fail_e {
 
 // iterator related structs
 typedef struct iter_op_s {
-    iter_op_type_t type;
     TRIE_CHAR dch; // the deleted char in delete/change ops
     TRIE_CHAR ich; // the deleted char in delete/change ops
     unsigned long index;
     unsigned long auxindex;
     unsigned long depth;
+    iter_op_type_t type;
 } iter_op_t;
 
 typedef struct iter_pos_s {
-    iter_op_t op;
     unsigned long pos; // used for simulating multiple recursive calls in the same body.
+    iter_op_t op;
     trie_node_t *iptr; // used for holding the current processing node.
     trie_node_t *prefix; // hold for not calculating prefix everytime
 } iter_pos_t;
 
 // fast, pre-allocated iter_pos_t stack
 typedef struct iter_stack_s {
-    iter_pos_t *_elems;
     unsigned long index;
     unsigned long size;
+    iter_pos_t *_elems;
 }iter_stack_t;
 
 typedef struct iter_s {
     int first;
     int last;
     int fail;
-    iter_fail_t fail_reason;
     int keylen_reached; // flags used for delaying key changes
     int depth_reached; // flags used for delaying key changes
+    unsigned long max_depth;
+    iter_fail_t fail_reason;
     trie_t *trie;
     trie_key_t *key;
     trie_node_t *prefix;
     iter_stack_t *stack0;
     iter_stack_t *stack1;
-    unsigned long max_depth;
 } iter_t;
 
 typedef int (*trie_enum_cbk_t)(trie_key_t *key, trie_node_t *node, void *arg);
@@ -136,6 +136,7 @@ trie_serialized_t *trie_serialize(trie_t *t);
 trie_t *trie_deserialize(trie_serialized_t *s);
 trie_node_t *trie_get_child(trie_node_t *node, TRIE_CHAR ch);
 int trie_add_child(trie_t *t, trie_node_t *parent, trie_node_t *child);
+trie_node_t **trie_node_children(trie_node_t *node);
 
 // Enumeration functions
 // Suffix

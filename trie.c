@@ -429,16 +429,16 @@ int trie_node_hash_resize(trie_t *t, trie_node_t *node, int new_size) {
     TRIE_CHILD_HASH new_hash = TRIEMALLOC(t, sizeof(trie_node_t*) * new_size);
     for (int i = 0; i < new_size; i++) new_hash[i] = NULL;
 
+    trie_node_t ** children = trie_node_children(node);
     unsigned short int pos;
     trie_node_t *current;
-    for(int i = 0; i < old_size; i++) {
-        current = old_hash[i];
-        while (current) {
-            pos = (int) current->key % new_size;
-            new_hash[pos] = current;
-            current = current->next;
-        }
+    for(int i = 0; i < node->child_count; i++){
+        current = children[i];
+        pos = (int) current->key % new_size;
+        current->next = new_hash[pos];
+        new_hash[pos] = current;
     }
+    free(children);
     node->child_hash = new_hash;
     node->hash_size = new_size;
     TRIEFREE(t, old_hash);
@@ -447,10 +447,11 @@ int trie_node_hash_resize(trie_t *t, trie_node_t *node, int new_size) {
 trie_node_t **trie_node_children(trie_node_t *node) {
     if (node->child_count == 0) return NULL;
     unsigned int children_offset = 0;
-    trie_node_t **children = (trie_node_t*)malloc(sizeof(trie_node_t*) * node->child_count);
-    for (int i = 0; i < node->child_count; i++) {
-        children[i] = NULL;
+    trie_node_t **children = (trie_node_t **)malloc(sizeof(trie_node_t*) * node->child_count);
+    if (!children) {
+        return NULL;
     }
+    for (int i = 0; i < node->child_count; i++) children[i] = NULL;
     trie_node_t *result_head = NULL, *current, *hash_head;
     for(int i = 0; i < node->hash_size; i++) {
         current = node->child_hash[i];
